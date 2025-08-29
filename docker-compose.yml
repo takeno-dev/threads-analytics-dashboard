@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: threads-dashboard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: threads_dashboard
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - threads-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: threads-dashboard-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - threads-network
+
+  # Next.js Application (for production)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: threads-dashboard-app
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/threads_dashboard?schema=public
+      - REDIS_URL=redis://redis:6379
+      - NEXTAUTH_SECRET=your-production-secret-here
+      - NEXTAUTH_URL=http://localhost:3000
+      - THREADS_APP_ID=your-threads-app-id
+      - THREADS_APP_SECRET=your-threads-app-secret
+      - GOOGLE_CLIENT_ID=your-google-client-id
+      - GOOGLE_CLIENT_SECRET=your-google-client-secret
+    ports:
+      - "3000:3000"
+    networks:
+      - threads-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  threads-network:
+    driver: bridge

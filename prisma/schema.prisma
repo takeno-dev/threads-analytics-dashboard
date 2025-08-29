@@ -1,0 +1,166 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// NextAuth.js required models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("sessions")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  threadsUserId   String?   @unique @map("threads_user_id")
+  username        String?
+  displayName     String?   @map("display_name")
+  profileImageUrl String?   @map("profile_image_url")
+  email           String?   @unique
+  emailVerified   DateTime? @map("email_verified")
+  image           String?
+  
+  posts     Post[]
+  webhooks  Webhook[]
+  accounts  Account[]
+  sessions  Session[]
+  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  @@map("users")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+  
+  @@unique([identifier, token])
+  @@map("verificationtokens")
+}
+
+model Post {
+  id            String     @id @default(cuid())
+  userId        String     @map("user_id")
+  threadsPostId String?    @unique @map("threads_post_id")
+  content       String
+  mediaUrls     Json?      @map("media_urls")
+  postType      PostType   @default(TEXT) @map("post_type")
+  status        PostStatus @default(PUBLISHED)
+  publishedAt   DateTime?  @map("published_at")
+  
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  insights  Insight[]
+  replies   Reply[]
+  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  @@index([userId])
+  @@map("posts")
+}
+
+model Reply {
+  id              String   @id @default(cuid())
+  postId          String   @map("post_id")
+  threadsReplyId  String   @unique @map("threads_reply_id")
+  content         String
+  authorId        String   @map("author_id")
+  authorUsername  String   @map("author_username")
+  authorImage     String?  @map("author_image")
+  
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  @@index([postId])
+  @@map("replies")
+}
+
+model Insight {
+  id         String     @id @default(cuid())
+  postId     String     @map("post_id")
+  metricType MetricType @map("metric_type")
+  value      Int
+  recordedAt DateTime   @map("recorded_at")
+  
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  
+  @@index([postId, metricType])
+  @@map("insights")
+}
+
+model Webhook {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  url         String
+  events      Json
+  isActive    Boolean  @default(true) @map("is_active")
+  secret      String?
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  @@index([userId])
+  @@map("webhooks")
+}
+
+enum PostType {
+  TEXT
+  IMAGE
+  VIDEO
+  POLL
+  CAROUSEL
+}
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  DELETED
+}
+
+enum MetricType {
+  IMPRESSIONS
+  LIKES
+  REPLIES
+  REPOSTS
+  QUOTES
+  CLICKS
+  REACH
+}

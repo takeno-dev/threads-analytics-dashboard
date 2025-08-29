@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for Development
+  postgres-dev:
+    image: postgres:15-alpine
+    container_name: threads-dashboard-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: threads_dashboard_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - threads-network-dev
+
+  # Redis Cache for Development
+  redis-dev:
+    image: redis:7-alpine
+    container_name: threads-dashboard-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - threads-network-dev
+
+  # Prisma Studio (optional)
+  prisma-studio:
+    image: node:20-alpine
+    container_name: threads-dashboard-prisma-studio
+    restart: unless-stopped
+    depends_on:
+      - postgres-dev
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres-dev:5432/threads_dashboard_dev?schema=public
+    ports:
+      - "5555:5555"
+    networks:
+      - threads-network-dev
+    command: >
+      sh -c "
+        corepack enable pnpm &&
+        pnpm install &&
+        pnpm db:generate &&
+        pnpm db:studio --hostname 0.0.0.0
+      "
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+networks:
+  threads-network-dev:
+    driver: bridge
