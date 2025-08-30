@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import { TRPCReactProvider } from "@/trpc/react";
+import SessionProviderWrapper from "@/components/providers/session-provider";
+import { Toaster } from "sonner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,7 +31,10 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        <SessionProviderWrapper>
+          <TRPCReactProvider>{children}</TRPCReactProvider>
+          <Toaster />
+        </SessionProviderWrapper>
       </body>
     </html>
   );
