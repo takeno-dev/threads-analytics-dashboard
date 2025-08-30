@@ -2,8 +2,22 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  experimental: {
-    serverComponentsExternalPackages: ["@prisma/client"],
+  serverExternalPackages: ["@prisma/client"],
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "scontent-*.cdninstagram.com",
+      },
+      {
+        protocol: "https",
+        hostname: "**.cdninstagram.com",
+      },
+      {
+        protocol: "https",
+        hostname: "scontent.cdninstagram.com",
+      },
+    ],
   },
 };
 
