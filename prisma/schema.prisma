@@ -42,14 +42,16 @@ model Session {
 }
 
 model User {
-  id              String    @id @default(cuid())
-  threadsUserId   String?   @unique @map("threads_user_id")
-  username        String?
-  displayName     String?   @map("display_name")
-  profileImageUrl String?   @map("profile_image_url")
-  email           String?   @unique
-  emailVerified   DateTime? @map("email_verified")
-  image           String?
+  id                 String    @id @default(cuid())
+  threadsUserId      String?   @unique @map("threads_user_id")
+  threadsAccessToken String?   @map("threads_access_token") @db.Text
+  name               String?   // NextAuth.js required field
+  username           String?
+  displayName        String?   @map("display_name")
+  profileImageUrl    String?   @map("profile_image_url")
+  email              String?   @unique
+  emailVerified      DateTime? @map("email_verified")
+  image              String?
   
   posts     Post[]
   webhooks  Webhook[]
@@ -81,9 +83,16 @@ model Post {
   status        PostStatus @default(PUBLISHED)
   publishedAt   DateTime?  @map("published_at")
   
+  // Analytics fields from Threads API
+  views         Int        @default(0)
+  likes         Int        @default(0)
+  replies       Int        @default(0)
+  reposts       Int        @default(0)
+  quotes        Int        @default(0)
+  
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   insights  Insight[]
-  replies   Reply[]
+  postReplies   Reply[] @relation("PostReplies")
   
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -101,7 +110,7 @@ model Reply {
   authorUsername  String   @map("author_username")
   authorImage     String?  @map("author_image")
   
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post Post @relation("PostReplies", fields: [postId], references: [id], onDelete: Cascade)
   
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -111,15 +120,25 @@ model Reply {
 }
 
 model Insight {
-  id         String     @id @default(cuid())
-  postId     String     @map("post_id")
-  metricType MetricType @map("metric_type")
-  value      Int
-  recordedAt DateTime   @map("recorded_at")
+  id         String   @id @default(cuid())
+  postId     String   @map("post_id")
+  metricType String   @map("metric_type")
+  views      Int      @default(0)
+  likes      Int      @default(0)
+  replies    Int      @default(0)
+  reposts    Int      @default(0)
+  quotes     Int      @default(0)
+  shares     Int      @default(0)
+  saves      Int      @default(0)
+  reach      Int      @default(0)
+  impressions Int     @default(0)
+  engagement Int      @default(0)
   
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
   
-  @@index([postId, metricType])
+  @@unique([postId, metricType])
   @@map("insights")
 }
 
@@ -155,12 +174,3 @@ enum PostStatus {
   DELETED
 }
 
-enum MetricType {
-  IMPRESSIONS
-  LIKES
-  REPLIES
-  REPOSTS
-  QUOTES
-  CLICKS
-  REACH
-}

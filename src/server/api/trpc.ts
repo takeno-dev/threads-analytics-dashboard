@@ -17,10 +17,11 @@ const createInnerTRPCContext = (opts: CreateContextOptions) => {
 };
 
 export const createTRPCContext = async () => {
-  // For now, we'll return a context without session
-  // Session handling will be added later when NextAuth is properly configured
+  const { auth } = await import("@/server/auth");
+  const session = await auth();
+  
   return createInnerTRPCContext({
-    session: null,
+    session,
   });
 };
 
