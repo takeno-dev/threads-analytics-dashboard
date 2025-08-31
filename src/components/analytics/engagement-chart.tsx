@@ -4,9 +4,13 @@ import { api } from "@/trpc/react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { format } from "date-fns";
 import { ja } from "date-fns/locale";
+import { useAnalytics } from "./analytics-provider";
 
 export function EngagementChart() {
-  const { data: analytics, isLoading, error } = api.threads.getAnalytics.useQuery();
+  const { getAnalyticsParams } = useAnalytics();
+  const analyticsParams = getAnalyticsParams();
+  
+  const { data: analytics, isLoading, error } = api.threads.getAnalytics.useQuery(analyticsParams);
 
   if (isLoading) {
     return (
@@ -55,11 +59,29 @@ export function EngagementChart() {
           height={60}
           tick={{ fontSize: 10, dy: 10 }}
           tickFormatter={(value, index) => {
-            // Show every 6th tick for 30 days (5 evenly spaced ticks)
             const totalTicks = chartData.length;
-            const showInterval = Math.max(1, Math.floor(totalTicks / 6));
+            let showInterval = Math.max(1, Math.floor(totalTicks / 8));
+            
+            // Adjust interval based on dimension and data size
+            if (analyticsParams.dimension === "day" && totalTicks > 30) {
+              showInterval = Math.max(1, Math.floor(totalTicks / 6));
+            } else if (analyticsParams.dimension === "month") {
+              showInterval = 1; // Show all months
+            }
+            
             if (index % showInterval === 0 || index === totalTicks - 1) {
-              return value;
+              const date = new Date(value);
+              
+              // Format based on dimension
+              if (analyticsParams.dimension === "day") {
+                return date.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
+              } else if (analyticsParams.dimension === "week") {
+                return date.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
+              } else if (analyticsParams.dimension === "month") {
+                return date.toLocaleDateString('ja-JP', { year: 'numeric', month: 'short' });
+              }
+              
+              return date.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
             }
             return "";
           }}

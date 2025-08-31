@@ -89,6 +89,7 @@ model Post {
   replies       Int        @default(0)
   reposts       Int        @default(0)
   quotes        Int        @default(0)
+  insightsFailed Boolean   @default(false) @map("insights_failed")
   
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   insights  Insight[]

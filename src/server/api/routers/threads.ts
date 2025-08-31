@@ -412,7 +412,18 @@ export const threadsRouter = createTRPCRouter({
   /**
    * Get analytics overview
    */
-  getAnalytics: protectedProcedure.query(async ({ ctx }) => {
+  getAnalytics: protectedProcedure
+    .input(
+      z.object({
+        dimension: z.enum(["day", "week", "month"]).default("week"),
+        period: z.object({
+          from: z.date().optional(),
+          to: z.date().optional(),
+          days: z.number().min(1).max(365).default(365),
+        }).default({ days: 365 }),
+      }).optional().default(() => ({ dimension: "week" as const, period: { days: 365 } }))
+    )
+    .query(async ({ ctx, input }) => {
     try {
       // Get user's access token for API calls
       const user = await ctx.db.user.findUnique({
@@ -445,9 +456,10 @@ export const threadsRouter = createTRPCRouter({
           .filter(post => {
             const postDate = post.publishedAt || post.createdAt;
             const daysDiff = (Date.now() - postDate.getTime()) / (1000 * 60 * 60 * 24);
-            return daysDiff <= 30; // Only process posts from last 30 days
+            // Skip posts that have failed API calls and posts older than 1 year
+            return daysDiff <= 365 && !post.insightsFailed;
           })
-          .slice(0, 10); // Reduced from 20 to 10 to avoid rate limits
+          .slice(0, 20); // Increased back to 20 for 1-year data range
         
         for (const post of recentPosts) {
           if (post.threadsPostId) {
@@ -495,7 +507,13 @@ export const threadsRouter = createTRPCRouter({
               if (errorMessage.includes('does not exist') || 
                   errorMessage.includes('missing permissions') || 
                   errorMessage.includes('Unsupported get request')) {
-                console.log(`⏭️ Skipping inaccessible post ${post.threadsPostId}: ${errorMessage}`);
+                console.log(`⏭️ Permanently skipping inaccessible post ${post.threadsPostId}: ${errorMessage}`);
+                
+                // Mark this post as failed to avoid future API calls
+                await ctx.db.post.update({
+                  where: { id: post.id },
+                  data: { insightsFailed: true },
+                });
               } else {
                 console.log(`⚠️ Failed to fetch insights for post ${post.threadsPostId}:`, errorMessage);
               }
@@ -555,51 +573,96 @@ export const threadsRouter = createTRPCRouter({
         })
         .slice(0, 5);
 
-      // Get engagement over time (last 30 days)
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      // Calculate date range based on period input
+      const { dimension, period } = input;
+      let startDate: Date;
+      let endDate: Date = new Date();
+
+      if (period?.from && period?.to) {
+        startDate = new Date(period.from);
+        endDate = new Date(period.to);
+      } else {
+        startDate = new Date();
+        startDate.setDate(startDate.getDate() - (period?.days || 365));
+      }
 
       const recentPosts = await ctx.db.post.findMany({
         where: {
           userId: ctx.session.user.id,
-          publishedAt: { gte: thirtyDaysAgo },
+          publishedAt: { gte: startDate, lte: endDate },
         },
         orderBy: { publishedAt: "asc" },
       });
 
-      // Group by day for chart
-      const engagementByDay: { date: string; likes: number; replies: number; reposts: number; quotes: number }[] = [];
-      const dailyMap = new Map<string, { likes: number; replies: number; reposts: number; quotes: number }>();
+      // Group engagement data by selected dimension
+      const engagementByDimension: { date: string; likes: number; replies: number; reposts: number; quotes: number }[] = [];
+      const dimensionMap = new Map<string, { likes: number; replies: number; reposts: number; quotes: number }>();
+
+      // Helper function to get the appropriate key based on dimension
+      const getDimensionKey = (date: Date) => {
+        switch (dimension) {
+          case "day":
+            return date.toISOString().split('T')[0]; // YYYY-MM-DD
+          case "week":
+            // Get the Monday of the week (ISO week)
+            const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ...
+            const mondayOffset = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek); // Calculate offset to Monday
+            const monday = new Date(date.getTime() + (mondayOffset * 24 * 60 * 60 * 1000));
+            return monday.toISOString().split('T')[0]; // Use Monday as the week key
+          case "month":
+            return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`; // YYYY-MM-01
+          default:
+            return date.toISOString().split('T')[0];
+        }
+      };
 
       recentPosts.forEach(post => {
-        const dateKey = (post.publishedAt || new Date()).toISOString().split('T')[0];
-        const existing = dailyMap.get(dateKey) || { likes: 0, replies: 0, reposts: 0, quotes: 0 };
+        if (!post.publishedAt) return;
+        
+        const postDate = new Date(post.publishedAt);
+        const key = getDimensionKey(postDate);
+        
+        const existing = dimensionMap.get(key) || { likes: 0, replies: 0, reposts: 0, quotes: 0 };
         
         existing.likes += post.likes || 0;
         existing.replies += post.replies || 0;
         existing.reposts += post.reposts || 0;
         existing.quotes += post.quotes || 0;
         
-        dailyMap.set(dateKey, existing);
+        dimensionMap.set(key, existing);
       });
 
-      // Convert to array and fill missing days with 0 (ensure even spacing)
-      const today = new Date();
+      // Generate complete time series based on dimension and fill missing periods with 0
+      const timeDiff = endDate.getTime() - startDate.getTime();
       const engagementData = [];
       
-      for (let i = 29; i >= 0; i--) {
-        const date = new Date(today.getTime() - (i * 24 * 60 * 60 * 1000)); // Subtract exact days in milliseconds
-        const dateKey = date.toISOString().split('T')[0];
-        const data = dailyMap.get(dateKey) || { likes: 0, replies: 0, reposts: 0, quotes: 0 };
-        
-        engagementData.push({
-          date: dateKey,
-          ...data,
-        });
+      if (dimension === "day") {
+        const days = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+        for (let i = 0; i < days; i++) {
+          const date = new Date(startDate.getTime() + (i * 24 * 60 * 60 * 1000));
+          const key = getDimensionKey(date);
+          const data = dimensionMap.get(key) || { likes: 0, replies: 0, reposts: 0, quotes: 0 };
+          engagementData.push({ date: key, ...data });
+        }
+      } else if (dimension === "week") {
+        const weeks = Math.ceil(timeDiff / (1000 * 60 * 60 * 24 * 7));
+        for (let i = 0; i < weeks; i++) {
+          const date = new Date(startDate.getTime() + (i * 7 * 24 * 60 * 60 * 1000));
+          const key = getDimensionKey(date);
+          const data = dimensionMap.get(key) || { likes: 0, replies: 0, reposts: 0, quotes: 0 };
+          engagementData.push({ date: key, ...data });
+        }
+      } else if (dimension === "month") {
+        const currentDate = new Date(startDate);
+        while (currentDate <= endDate) {
+          const key = getDimensionKey(currentDate);
+          const data = dimensionMap.get(key) || { likes: 0, replies: 0, reposts: 0, quotes: 0 };
+          engagementData.push({ date: key, ...data });
+          currentDate.setMonth(currentDate.getMonth() + 1);
+        }
       }
       
-      // Assign the properly ordered data
-      engagementByDay.push(...engagementData);
+      engagementByDimension.push(...engagementData);
 
       return {
         overview: {
@@ -624,7 +687,7 @@ export const threadsRouter = createTRPCRouter({
           quotes: post.quotes,
           views: post.views,
         })),
-        engagementByDay,
+        engagementByDay: engagementByDimension,
       };
     } catch (error) {
       throw new TRPCError({

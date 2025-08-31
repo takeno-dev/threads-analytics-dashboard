@@ -2,8 +2,10 @@ import { Suspense } from "react";
 import { AnalyticsOverview } from "@/components/analytics/analytics-overview";
 import { EngagementChart } from "@/components/analytics/engagement-chart";
 import { TopPostsTable } from "@/components/analytics/top-posts-table";
+import { AnalyticsControls } from "@/components/analytics/analytics-controls";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AnalyticsProvider } from "@/components/analytics/analytics-provider";
 
 function AnalyticsLoading() {
   return (
@@ -53,38 +55,48 @@ function AnalyticsLoading() {
   );
 }
 
+function AnalyticsContent() {
+  return (
+    <div className="space-y-4">
+      <AnalyticsOverview />
+      
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+        <Card className="col-span-4">
+          <CardHeader>
+            <CardTitle>エンゲージメントの推移</CardTitle>
+          </CardHeader>
+          <CardContent className="pl-2">
+            <EngagementChart />
+          </CardContent>
+        </Card>
+        
+        <Card className="col-span-3">
+          <CardHeader>
+            <CardTitle>人気の投稿</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TopPostsTable />
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsPage() {
   return (
-    <div className="flex-1 space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold tracking-tight">アナリティクス</h2>
-      </div>
-      
-      <Suspense fallback={<AnalyticsLoading />}>
-        <div className="space-y-4">
-          <AnalyticsOverview />
-          
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-            <Card className="col-span-4">
-              <CardHeader>
-                <CardTitle>エンゲージメントの推移</CardTitle>
-              </CardHeader>
-              <CardContent className="pl-2">
-                <EngagementChart />
-              </CardContent>
-            </Card>
-            
-            <Card className="col-span-3">
-              <CardHeader>
-                <CardTitle>人気の投稿</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <TopPostsTable />
-              </CardContent>
-            </Card>
-          </div>
+    <AnalyticsProvider>
+      <div className="flex-1 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-3xl font-bold tracking-tight">アナリティクス</h2>
         </div>
-      </Suspense>
-    </div>
+        
+        <AnalyticsControls />
+        
+        <Suspense fallback={<AnalyticsLoading />}>
+          <AnalyticsContent />
+        </Suspense>
+      </div>
+    </AnalyticsProvider>
   );
 }
