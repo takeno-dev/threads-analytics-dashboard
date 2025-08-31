@@ -3,12 +3,6 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { createThreadsClient, type ThreadsPost } from "@/lib/threads-api";
 import { TRPCError } from "@trpc/server";
 
-// Debug: Check environment variables on startup
-console.log("Threads Router Init - Env Check:", {
-  NODE_ENV: process.env.NODE_ENV,
-  HAS_THREADS_ACCESS_TOKEN: !!process.env.THREADS_ACCESS_TOKEN,
-  THREADS_ACCESS_TOKEN_PREFIX: process.env.THREADS_ACCESS_TOKEN?.substring(0, 20) + "..."
-});
 
 export const threadsRouter = createTRPCRouter({
   /**
@@ -101,11 +95,8 @@ export const threadsRouter = createTRPCRouter({
           });
         }
 
-        console.log("Creating Threads client with token:", accessToken?.substring(0, 20) + "...");
-        
         const client = createThreadsClient(accessToken);
         
-        console.log("Fetching threads for user:", user?.threadsUserId || "me");
         
         const response = await client.getUserThreads(
           user?.threadsUserId || "me",
@@ -113,19 +104,11 @@ export const threadsRouter = createTRPCRouter({
           input.cursor
         );
         
-        console.log("Threads response:", response);
 
         // Save threads to database
         if (response.data && response.data.length > 0) {
           await Promise.all(
             response.data.map(async (thread) => {
-              // Debug: Log engagement metrics from API
-              console.log(`Thread ${thread.id} metrics:`, {
-                like_count: thread.like_count,
-                reply_count: thread.reply_count,
-                repost_count: thread.repost_count,
-                quote_count: thread.quote_count,
-              });
 
               // Convert media_type to PostType enum
               const postType = thread.media_type === 'IMAGE' ? 'IMAGE' : 
@@ -310,14 +293,11 @@ export const threadsRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       try {
-        console.log("connectAccount called with token:", input.accessToken.substring(0, 20) + "...");
         
         // Verify the access token by fetching profile
         const client = createThreadsClient(input.accessToken);
-        console.log("Created Threads client, fetching profile...");
         
         const profile = await client.getUserProfile("me");
-        console.log("Profile fetched successfully:", profile.username);
 
         // Save the access token and profile info
         await ctx.db.user.update({
@@ -330,7 +310,6 @@ export const threadsRouter = createTRPCRouter({
           },
         });
 
-        console.log("User updated successfully with Threads data");
 
         return {
           success: true,
@@ -395,12 +374,6 @@ export const threadsRouter = createTRPCRouter({
     const hasToken = !!(user?.threadsAccessToken || 
       (process.env.NODE_ENV === "development" && process.env.THREADS_ACCESS_TOKEN));
     
-    console.log("isConnected check:", {
-      hasUserToken: !!user?.threadsAccessToken,
-      hasEnvToken: !!(process.env.NODE_ENV === "development" && process.env.THREADS_ACCESS_TOKEN),
-      envMode: process.env.NODE_ENV,
-      finalConnected: hasToken
-    });
     
     return {
       connected: hasToken,
@@ -446,26 +419,32 @@ export const threadsRouter = createTRPCRouter({
       let totalViews = 0;
       let totalShares = 0;
 
-      // Try to update insights data from API if access token is available
-      if (accessToken) {
-        console.log("📊 Updating insights data from Threads API...");
+      // Only update insights if explicitly requested or data is stale
+      const needsUpdate = accessToken && posts.some(post => {
+        if (!post.updatedAt || post.insightsFailed) return false;
+        const hoursSinceUpdate = (Date.now() - post.updatedAt.getTime()) / (1000 * 60 * 60);
+        return hoursSinceUpdate > 24; // Only update if data is older than 24 hours
+      });
+
+      if (needsUpdate && accessToken) {
         const client = createThreadsClient(accessToken);
         
-        // Update insights for recent posts (limit to avoid rate limiting and focus on recent data)
-        const recentPosts = posts
+        // Only update posts that haven't been updated in 24 hours
+        const postsToUpdate = posts
           .filter(post => {
-            const postDate = post.publishedAt || post.createdAt;
-            const daysDiff = (Date.now() - postDate.getTime()) / (1000 * 60 * 60 * 24);
-            // Skip posts that have failed API calls and posts older than 1 year
-            return daysDiff <= 365 && !post.insightsFailed;
+            if (!post.threadsPostId || post.insightsFailed) return false;
+            if (!post.updatedAt) return true;
+            const hoursSinceUpdate = (Date.now() - post.updatedAt.getTime()) / (1000 * 60 * 60);
+            return hoursSinceUpdate > 24;
           })
-          .slice(0, 20); // Increased back to 20 for 1-year data range
+          .slice(0, 5); // Limit to 5 posts per request to improve speed
         
-        for (const post of recentPosts) {
-          if (post.threadsPostId) {
+        // Update insights in parallel with Promise.allSettled to handle failures gracefully
+        await Promise.allSettled(
+          postsToUpdate.map(async (post) => {
+            if (!post.threadsPostId) return;
+            
             try {
-              console.log(`🔄 Fetching insights for post ${post.threadsPostId}...`);
-              
               const insights = await client.getThreadInsights(post.threadsPostId, ["views", "likes", "replies", "reposts", "quotes"]);
               
               // Parse insights data
@@ -482,8 +461,6 @@ export const threadsRouter = createTRPCRouter({
                 }
               });
               
-              console.log(`✅ Post ${post.threadsPostId} insights:`, { views, likes, replies, reposts, quotes });
-              
               // Update post in database
               await ctx.db.post.update({
                 where: { id: post.id },
@@ -496,10 +473,6 @@ export const threadsRouter = createTRPCRouter({
                   updatedAt: new Date(),
                 },
               });
-              
-              // Small delay to avoid rate limiting
-              await new Promise(resolve => setTimeout(resolve, 100));
-              
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : 'Unknown error';
               
@@ -507,40 +480,26 @@ export const threadsRouter = createTRPCRouter({
               if (errorMessage.includes('does not exist') || 
                   errorMessage.includes('missing permissions') || 
                   errorMessage.includes('Unsupported get request')) {
-                console.log(`⏭️ Permanently skipping inaccessible post ${post.threadsPostId}: ${errorMessage}`);
-                
                 // Mark this post as failed to avoid future API calls
                 await ctx.db.post.update({
                   where: { id: post.id },
                   data: { insightsFailed: true },
                 });
-              } else {
-                console.log(`⚠️ Failed to fetch insights for post ${post.threadsPostId}:`, errorMessage);
               }
             }
-          }
-        }
+          })
+        );
         
-        // Fetch updated posts data
-        const updatedPosts = await ctx.db.post.findMany({
-          where: { userId: ctx.session.user.id },
-          orderBy: { publishedAt: "desc" },
-        });
-        posts.splice(0, posts.length, ...updatedPosts);
-        console.log("✅ Insights data updated from API");
-      } else {
-        console.log("ℹ️ Using existing insights data from database (no access token available)");
+        // Fetch updated posts data only if we updated something
+        if (postsToUpdate.length > 0) {
+          const updatedPosts = await ctx.db.post.findMany({
+            where: { userId: ctx.session.user.id },
+            orderBy: { publishedAt: "desc" },
+          });
+          posts.splice(0, posts.length, ...updatedPosts);
+        }
       }
 
-      // Debug: Log posts data
-      console.log("Posts data sample:", posts.slice(0, 2).map(p => ({
-        id: p.id,
-        likes: p.likes,
-        replies: p.replies,
-        reposts: p.reposts,
-        quotes: p.quotes,
-        views: p.views
-      })));
 
       const totalPosts = posts.length;
       const totalLikes = posts.reduce((sum, post) => sum + (post.likes || 0), 0);
@@ -550,16 +509,6 @@ export const threadsRouter = createTRPCRouter({
       totalViews = posts.reduce((sum, post) => sum + (post.views || 0), 0);
       totalShares = 0; // Not available in basic API
 
-      // Debug: Log calculated totals
-      console.log("Calculated totals:", {
-        totalPosts,
-        totalLikes,
-        totalReplies,
-        totalReposts,
-        totalQuotes,
-        totalViews,
-        totalShares
-      });
 
       const totalEngagement = totalLikes + totalReplies + totalReposts + totalQuotes;
       const averageEngagement = totalPosts > 0 ? Math.round(totalEngagement / totalPosts) : 0;
@@ -693,6 +642,117 @@ export const threadsRouter = createTRPCRouter({
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
         message: error instanceof Error ? error.message : "Failed to fetch analytics",
+      });
+    }
+  }),
+
+  /**
+   * Force update insights data for all posts
+   */
+  updateInsights: protectedProcedure.mutation(async ({ ctx }) => {
+    try {
+      const user = await ctx.db.user.findUnique({
+        where: { id: ctx.session.user.id },
+        select: { threadsAccessToken: true, threadsUserId: true },
+      });
+
+      let accessToken = user?.threadsAccessToken;
+      
+      if (!accessToken && process.env.NODE_ENV === "development") {
+        accessToken = process.env.THREADS_ACCESS_TOKEN;
+      }
+
+      if (!accessToken) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Threads account not connected",
+        });
+      }
+
+      const client = createThreadsClient(accessToken);
+      
+      // Get all posts that need updating
+      const posts = await ctx.db.post.findMany({
+        where: { 
+          userId: ctx.session.user.id,
+          insightsFailed: false,
+        },
+        orderBy: { publishedAt: "desc" },
+        take: 50, // Limit to 50 most recent posts
+      });
+
+      let updatedCount = 0;
+      
+      // Update insights in batches
+      const batchSize = 10;
+      for (let i = 0; i < posts.length; i += batchSize) {
+        const batch = posts.slice(i, i + batchSize);
+        
+        await Promise.allSettled(
+          batch.map(async (post) => {
+            if (!post.threadsPostId) return;
+            
+            try {
+              const insights = await client.getThreadInsights(post.threadsPostId, ["views", "likes", "replies", "reposts", "quotes"]);
+              
+              let views = 0, likes = 0, replies = 0, reposts = 0, quotes = 0;
+              
+              insights.data.forEach(metric => {
+                const value = metric.values[0]?.value || 0;
+                switch (metric.name) {
+                  case 'views': views = value; break;
+                  case 'likes': likes = value; break;
+                  case 'replies': replies = value; break;
+                  case 'reposts': reposts = value; break;
+                  case 'quotes': quotes = value; break;
+                }
+              });
+              
+              await ctx.db.post.update({
+                where: { id: post.id },
+                data: {
+                  views,
+                  likes,
+                  replies,
+                  reposts,
+                  quotes,
+                  updatedAt: new Date(),
+                },
+              });
+              
+              updatedCount++;
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+              
+              if (errorMessage.includes('does not exist') || 
+                  errorMessage.includes('missing permissions') || 
+                  errorMessage.includes('Unsupported get request')) {
+                await ctx.db.post.update({
+                  where: { id: post.id },
+                  data: { insightsFailed: true },
+                });
+              }
+            }
+          })
+        );
+        
+        // Small delay between batches to avoid rate limiting
+        if (i + batchSize < posts.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
+      return {
+        success: true,
+        message: `Successfully updated insights for ${updatedCount} posts`,
+        updatedCount,
+      };
+    } catch (error) {
+      if (error instanceof TRPCError) throw error;
+      
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: error instanceof Error ? error.message : "Failed to update insights",
       });
     }
   }),

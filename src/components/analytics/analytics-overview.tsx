@@ -2,10 +2,18 @@
 
 import { api } from "@/trpc/react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Heart, MessageCircle, Repeat2, Quote, BarChart3, TrendingUp, FileText } from "lucide-react";
+import { useAnalytics } from "./analytics-provider";
 
 export function AnalyticsOverview() {
-  const { data: analytics, isLoading, error } = api.threads.getAnalytics.useQuery();
+  const { getAnalyticsParams } = useAnalytics();
+  const analyticsParams = getAnalyticsParams();
+  
+  const { data: analytics, isLoading, error } = api.threads.getAnalytics.useQuery(analyticsParams, {
+    staleTime: 5 * 60 * 1000, // Consider data stale after 5 minutes
+    refetchInterval: false, // Don't refetch automatically
+  });
 
   if (isLoading) {
     return (
@@ -13,11 +21,12 @@ export function AnalyticsOverview() {
         {Array.from({ length: 7 }).map((_, i) => (
           <Card key={i}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">読み込み中...</CardTitle>
+              <Skeleton className="h-4 w-[100px]" />
+              <Skeleton className="h-4 w-4 rounded" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">-</div>
-              <p className="text-xs text-muted-foreground">データを取得中</p>
+              <Skeleton className="h-8 w-[60px] mb-2" />
+              <Skeleton className="h-3 w-[120px]" />
             </CardContent>
           </Card>
         ))}
